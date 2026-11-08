@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
+<title>搜索 · 校园失物招领</title>
+<link rel="stylesheet" href="/assets/app.css" />
+</head>
+<body>
+<header class="nav">
+  <button class="nav-back" onclick="location.href='/index.html'">‹</button>
+  <h1>搜索</h1>
+</header>
+
+<main class="wrap" id="root">
+  <div class="card">
+    <div class="row" style="margin-bottom:10px">
+      <input id="kw" type="text" placeholder="关键词：蓝色 雨伞 图书馆" />
+      <button class="btn btn-primary" id="btnSearch" style="flex:none">搜索</button>
+    </div>
+
+    <div class="row" style="gap:8px;flex-wrap:wrap">
+      <select id="category" style="flex:1;min-width:140px"><option value="">全部类别</option></select>
+      <select id="color" style="flex:1;min-width:110px"><option value="">全部颜色</option></select>
+    </div>
+    <div class="row" style="gap:8px;flex-wrap:wrap;margin-top:8px">
+      <select id="campus" style="flex:1;min-width:130px"><option value="">全部校区</option></select>
+      <select id="building" style="flex:1;min-width:130px"><option value="">全部楼栋</option></select>
+    </div>
+    <div class="row" style="gap:8px;margin-top:8px">
+      <input id="eventTime" type="date" style="flex:1" title="大致时间，可留空" />
+      <button class="btn btn-sm" id="btnReset" style="flex:none">重置</button>
+    </div>
+    <div class="hint" id="hint">可以只填关键词，系统会自动识别类别和颜色</div>
+  </div>
+
+  <div id="list" class="post-list"></div>
+  <div id="empty" class="empty" style="display:none">
+    <div class="big" id="emptyIco"></div>
+    <div>没有找到相关帖子</div>
+    <div class="muted" style="margin-top:8px">换个说法试试，或者直接发帖等系统自动匹配</div>
+    <a class="btn btn-primary" href="/publish.html" style="margin-top:16px">去发布</a>
+  </div>
+</main>
+
+<script src="/assets/app.js"></script>
+<script>
+(function () {
+  const A = window.APP;
+  A.mountTab('');
+  const $ = (id) => document.getElementById(id);
+  let CFG = null;
+  document.addEventListener('DOMContentLoaded', () => { const e = document.getElementById('emptyIco'); if (e) e.innerHTML = A.ICO.search; });
+
+  function fillOptions() {
+    $('category').innerHTML = '<option value="">全部类别</option>' + CFG.categories.map((c) => '<option>' + A.esc(c) + '</option>').join('');
+    $('color').innerHTML = '<option value="">全部颜色</option>' + CFG.colors.filter((c) => c !== CFG.colorUnknown).map((c) => '<option>' + A.esc(c) + '</option>').join('');
+    $('campus').innerHTML = '<option value="">全部校区</option>' + CFG.campuses.map((c) => '<option>' + A.esc(c.name) + '</option>').join('');
+    fillBuildings();
+  }
+
+  function fillBuildings() {
+    const name = $('campus').value;
+    const campus = CFG.campuses.find((c) => c.name === name);
+    if (!campus) {
+      $('building').innerHTML = '<option value="">全部楼栋</option>';
+      return;
+    }
+    const all = [];
+    campus.groups.forEach((g) => g.buildings.forEach((b) => all.push(b)));
+    $('building').innerHTML = '<option value="">全部楼栋</option>' + all.map((b) => '<option>' + A.esc(b) + '</option>').join('');
+  }
+
+  $('campus').addEventListener('change', fillBuildings);
+
+  function card(p) {
+    const score = p.matchScore;
+    return (
+      '<article class="post ' + (p.type === 'found' ? 'found' : '') + '" data-id="' + p._id + '">' +
+      (score != null ? '<span class="score ' + A.levelClass(score) + '">' + score + ' 分 · ' + A.esc(p.matchLevelText) + '</span>' : '') +
+      '<div class="post-top">' +
+      '<span class="tag ' + (p.type === 'lost' ? 'tag-lost' : 'tag-found') + '">' + A.typeLabel(p.type) + '</span>' +
+      '<h3>' + A.esc(p.category) + '</h3>' +
+      (p.idTail ? '<span class="tag tag-gray">' + A.esc(p.idTail) + '</span>' : '') +
+      '</div>' +
+      '<div class="desc">' + A.esc(p.description) + '</div>' +
+      '<div class="meta">' +
+      '<span>' + A.ICO.pin + A.esc(A.locText(p)) + '</span>' +
+      '<span>' + A.ICO.clock + A.esc(A.timeText(p)) + '</span>' +
+      (p.color && p.color !== '不确定/不适用' ? '<span>颜色 ' + A.esc(p.color) + '</span>' : '') +
+      '</div>' +
+      (p.matchReasons && p.matchReasons.length
+        ? '<div class="reasons">' + p.matchReasons.map((x) => '<span class="reason">' + A.esc(x) + '</span>').join('') + '</div>'
+        : '') +
+      '</article>'
+    );
+  }
+
+  async function run() {
+    const q = new URLSearchParams();
+    const kw = $('kw').value.trim();
+    if (kw) q.set('kw', kw);
+    if ($('category').value) q.set('category', $('category').value);
+    if ($('color').value) q.set('color', $('color').value);
+    if ($('campus').value) q.set('campus', $('campus').value);
+    if ($('building').value) q.set('building', $('building').value);
+    if ($('eventTime').value) q.set('eventTime', String(new Date($('eventTime').value + 'T09:00:00').getTime()));
+
+    $('list').innerHTML = '<div class="empty">搜索中…</div>';
+    const r = await A.api('search?' + q.toString());
+    if (!r.ok) {
+      $('list').innerHTML = '';
+      $('empty').style.display = 'block';
+      return;
+    }
+    $('hint').textContent = r.keywordUsed
+      ? r.keywordUsed + '（其余按关键词与描述相似度打分）'
+      : q.toString() ? '按匹配度从高到低排序' : '可以只填关键词，系统会自动识别类别和颜色';
+    $('list').innerHTML = r.list.map(card).join('');
+    $('empty').style.display = r.list.length ? 'none' : 'block';
+    if (!r.list.length) $('list').innerHTML = '';
+    // 把查询词回填到地址栏，方便刷新/分享
+    history.replaceState(null, '', '/search.html' + (q.toString() ? '?' + q.toString() : ''));
+  }
+
+  $('btnSearch').onclick = run;
+  $('kw').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') run();
+  });
+  $('btnReset').onclick = () => {
+    ['kw', 'category', 'color', 'campus', 'building', 'eventTime'].forEach((id) => ($(id).value = ''));
+    fillBuildings();
+    run();
+  };
+
+  $('list').addEventListener('click', (e) => {
+    const el = e.target.closest('[data-id]');
+    if (el) location.href = '/detail.html?id=' + el.getAttribute('data-id');
+  });
+
+  A.api('config').then((cfg) => {
+    CFG = cfg;
+    fillOptions();
+    const kw = new URLSearchParams(location.search).get('kw') || '';
+    $('kw').value = kw;
+    run();
+    A.refreshUnread();
+  });
+})();
+</script>
+</body>
+</html>

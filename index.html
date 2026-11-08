@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
+<title>校园失物招领 · 广场</title>
+<link rel="stylesheet" href="/assets/app.css" />
+</head>
+<body>
+<header class="nav">
+  <h1>校园失物招领</h1>
+  <span class="nav-sub">南京航空航天大学</span>
+</header>
+
+<main class="wrap" id="root">
+  <div class="card" style="padding:14px 16px">
+    <div class="row">
+      <input id="kw" type="text" placeholder="搜物品、颜色、地点，如「蓝色 雨伞 图书馆」" />
+      <button class="btn btn-primary" id="btnSearch" style="flex:none">搜索</button>
+    </div>
+    <div class="muted" style="margin-top:8px">找不到就直接发帖，系统会自动帮你盯反方向的帖子</div>
+  </div>
+
+  <div class="seg" id="seg" style="margin-bottom:14px">
+    <button data-type="" class="on">全部</button>
+    <button data-type="lost">失物</button>
+    <button data-type="found">招领</button>
+  </div>
+
+  <div id="list" class="post-list"></div>
+  <div id="empty" class="empty" style="display:none">
+    <div class="big" id="emptyIco"></div>
+    <div id="emptyText">还没有任何帖子</div>
+  </div>
+</main>
+
+<script src="/assets/app.js"></script>
+<script>
+(function () {
+  const A = window.APP;
+  A.mountTab('index');
+  document.getElementById('emptyIco').innerHTML = A.ICO.box;
+
+  const listEl = document.getElementById('list');
+  const emptyEl = document.getElementById('empty');
+  const segEl = document.getElementById('seg');
+  let type = '';
+  let booted = false;
+
+  document.getElementById('btnSearch').onclick = () => {
+    const kw = document.getElementById('kw').value.trim();
+    location.href = '/search.html' + (kw ? '?kw=' + encodeURIComponent(kw) : '');
+  };
+  document.getElementById('kw').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') document.getElementById('btnSearch').click();
+  });
+
+  segEl.addEventListener('click', (e) => {
+    const b = e.target.closest('button[data-type]');
+    if (!b) return;
+    segEl.querySelectorAll('button').forEach((x) => x.classList.remove('on'));
+    b.classList.add('on');
+    type = b.getAttribute('data-type');
+    load();
+  });
+
+  function card(p) {
+    return (
+      '<article class="post ' + (p.type === 'found' ? 'found' : '') + '" data-id="' + p._id + '">' +
+      '<div class="post-top">' +
+      '<span class="tag ' + (p.type === 'lost' ? 'tag-lost' : 'tag-found') + '">' + A.typeLabel(p.type) + '</span>' +
+      '<h3>' + A.esc(p.category) + '</h3>' +
+      (p.idTail ? '<span class="tag tag-gray">' + A.esc(p.idTail) + '</span>' : '') +
+      (p.isMine ? '<span class="tag tag-blue">我发布的</span>' : '') +
+      '</div>' +
+      '<div class="desc">' + A.esc(p.description) + '</div>' +
+      '<div class="meta">' +
+      '<span>' + A.ICO.pin + A.esc(A.locText(p)) + '</span>' +
+      '<span>' + A.ICO.clock + A.esc(A.timeText(p)) + '</span>' +
+      (p.color && p.color !== '不确定/不适用' ? '<span>颜色 ' + A.esc(p.color) + '</span>' : '') +
+      '<span>' + A.ago(p.createTime) + '</span>' +
+      '</div>' +
+      '</article>'
+    );
+  }
+
+  async function load() {
+    listEl.innerHTML = '<div class="empty">加载中…</div>';
+    const r = await A.api('posts' + (type ? '?type=' + type : ''));
+    if (!r.ok) {
+      listEl.innerHTML = '';
+      emptyEl.style.display = 'block';
+      document.getElementById('emptyText').textContent = r.errMsg || '加载失败';
+      return;
+    }
+    if (!r.list.length && !booted) {
+      booted = true;
+      // 首次进入且库是空的：自动导入演示数据，保证打开就有东西看
+      const seeded = await A.api('seed', { method: 'POST', body: {} });
+      if (seeded.ok) {
+        A.toast(seeded.already ? '已加载已有数据' : seeded.msg);
+        return load();
+      }
+    }
+    listEl.innerHTML = r.list.map(card).join('');
+    emptyEl.style.display = r.list.length ? 'none' : 'block';
+    if (!r.list.length) document.getElementById('emptyText').textContent = '还没有帖子，去发一条试试';
+  }
+
+  listEl.addEventListener('click', (e) => {
+    const el = e.target.closest('[data-id]');
+    if (el) location.href = '/detail.html?id=' + el.getAttribute('data-id');
+  });
+
+  load();
+  A.refreshUnread();
+  A.api('config').then((c) => A.storageWarn(document.getElementById('root'), c.storage));
+})();
+</script>
+</body>
+</html>

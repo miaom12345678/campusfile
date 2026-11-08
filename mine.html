@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
+<title>我的 · 校园失物招领</title>
+<link rel="stylesheet" href="/assets/app.css" />
+</head>
+<body>
+<header class="nav">
+  <h1>我的</h1>
+</header>
+
+<main class="wrap">
+  <div class="points-card">
+    <div class="label">我的积分</div>
+    <div class="num" id="points">0</div>
+    <div class="label" id="pointsTip">捡到物品并成功归还 1 次 +1 分，满 2 分可兑换一张食堂餐券</div>
+    <div class="stat-row">
+      <div class="stat"><b id="sPost">0</b><span>发布</span></div>
+      <div class="stat"><b id="sActive">0</b><span>进行中</span></div>
+      <div class="stat"><b id="sReturned">0</b><span>已归还</span></div>
+    </div>
+    <div class="repair" id="btnRepair">
+      <span>归还成功却没加积分？点此自检补发</span><span>›</span>
+    </div>
+  </div>
+
+  <div class="card" style="margin-top:14px">
+    <div class="card-title">食堂餐券 <span class="muted" id="couponCount"></span></div>
+    <div id="coupons"></div>
+    <button class="btn btn-primary btn-block" id="btnRedeem" style="margin-top:6px">用 2 积分兑换一张</button>
+  </div>
+
+  <div class="card">
+    <div class="card-title">我发布的帖子 <span class="muted" id="postCount"></span></div>
+    <div id="posts"></div>
+  </div>
+
+  <div class="card">
+    <div class="card-title">我发起的认领</div>
+    <div id="claims"></div>
+  </div>
+
+  <div class="card">
+    <div class="card-title">演示与维护</div>
+    <div class="muted" style="margin-bottom:10px">下面这些按钮只用于课堂演示和清理数据，正常使用不需要点。</div>
+    <div class="btn-row">
+      <button class="btn btn-sm" id="btnGrant">演示：+1 积分</button>
+      <button class="btn btn-sm" id="btnDedupe">检查重复数据</button>
+    </div>
+    <div class="btn-row" style="margin-top:8px">
+      <button class="btn btn-sm btn-danger" id="btnReseed">重置演示数据</button>
+      <a class="btn btn-sm" href="/api/health" target="_blank">查看服务状态</a>
+    </div>
+    <div class="muted" id="storageInfo" style="margin-top:10px"></div>
+  </div>
+</main>
+
+<script src="/assets/app.js"></script>
+<script>
+(function () {
+  const A = window.APP;
+  A.mountTab('mine');
+  const $ = (id) => document.getElementById(id);
+  let ME = null;
+
+  function postRow(p) {
+    const badge =
+      p.status === 'active'
+        ? '<span class="tag tag-blue">进行中</span>'
+        : p.status === 'claimed'
+        ? '<span class="tag tag-found">已认领</span>'
+        : '<span class="tag tag-gray">已结束</span>';
+    return (
+      '<div class="claim-item" style="cursor:pointer" data-post="' + p._id + '">' +
+      '<div class="row-between"><div class="row">' +
+      '<span class="tag ' + (p.type === 'lost' ? 'tag-lost' : 'tag-found') + '">' + A.typeLabel(p.type) + '</span>' +
+      '<b>' + A.esc(p.category) + '</b>' + badge +
+      (p.pendingClaims ? '<span class="tag tag-blue">' + p.pendingClaims + ' 条待处理</span>' : '') +
+      '</div><span class="muted">' + A.ago(p.createTime) + '</span></div>' +
+      '<div class="muted" style="margin-top:5px">' + A.esc(p.description).slice(0, 46) + '</div>' +
+      '</div>'
+    );
+  }
+
+  function claimRow(c) {
+    const map = { pending: '等待确认', accepted: '已同意', rejected: '未通过' };
+    const cls = c.status === 'accepted' ? 'tag-found' : c.status === 'pending' ? 'tag-blue' : 'tag-gray';
+    return (
+      '<div class="claim-item" style="cursor:pointer" data-post="' + (c.post ? c.post._id : '') + '">' +
+      '<div class="row-between"><div class="row"><span class="tag ' + cls + '">' + (map[c.status] || c.status) + '</span>' +
+      '<b>' + A.esc(c.post ? c.post.category : '帖子已删除') + '</b></div>' +
+      '<span class="muted">' + A.ago(c.createTime) + '</span></div>' +
+      (c.message ? '<div class="msg">' + A.esc(c.message) + '</div>' : '') +
+      '</div>'
+    );
+  }
+
+  function render(m) {
+    ME = m;
+    $('points').textContent = m.user.points;
+    $('sPost').textContent = m.stats.postCount;
+    $('sActive').textContent = m.stats.activeCount;
+    $('sReturned').textContent = m.stats.returnedCount;
+    $('pointsTip').textContent =
+      m.user.points >= m.couponCost
+        ? '已有 ' + m.user.points + ' 分，可以兑换 ' + Math.floor(m.user.points / m.couponCost) + ' 张餐券'
+        : '再得 ' + (m.couponCost - m.user.points) + ' 分即可兑换一张食堂餐券';
+
+    $('couponCount').textContent = m.coupons.length ? m.coupons.length + ' 张' : '';
+    $('coupons').innerHTML = m.coupons.length
+      ? m.coupons
+          .map(
+            (c) =>
+              '<div class="coupon"><div style="flex:1"><div class="code">' + A.esc(c.code) + '</div>' +
+              '<div class="muted">' + (c.status === 'valid' ? '未使用 · 食堂出示核销' : '已使用') + ' · ' + A.fmtDate(c.createTime) + '</div></div>' +
+              '<span class="tag ' + (c.status === 'valid' ? 'tag-found' : 'tag-gray') + '">' + (c.status === 'valid' ? '有效' : '已用') + '</span></div>'
+          )
+          .join('')
+      : '<div class="muted" style="padding:8px 0 12px">还没有餐券，攒够 2 分就能换</div>';
+
+    $('postCount').textContent = m.posts.length ? m.posts.length + ' 条' : '';
+    $('posts').innerHTML = m.posts.length ? m.posts.map(postRow).join('') : '<div class="muted">还没发过帖子，去「发布」试试</div>';
+  }
+
+  async function loadClaims() {
+    const r = await A.api('claims');
+    if (!r.ok) return;
+    $('claims').innerHTML = r.list.length ? r.list.map(claimRow).join('') : '<div class="muted">还没有发起过认领</div>';
+  }
+
+  async function load() {
+    const m = await A.api('me');
+    if (!m.ok) {
+      A.toast(m.errMsg || '加载失败');
+      return;
+    }
+    render(m);
+    loadClaims();
+
+    A.api('config').then((c) => {
+      const s = c.storage || {};
+      $('storageInfo').innerHTML =
+        s.backend === 'redis'
+          ? '✅ 云端数据库已连接（' + A.esc(s.redisHost || 'Upstash Redis') + '），刷新和换设备都能看到同一份数据'
+          : '⚠️ 当前使用本机文件存储（' + A.esc(s.file || '') + '），部署到 Vercel 前请创建 Upstash Redis 并配置环境变量';
+      A.storageWarn(document.querySelector('.wrap'), c.storage);
+    });
+  }
+
+  document.addEventListener('click', (e) => {
+    const el = e.target.closest('[data-post]');
+    if (el && el.getAttribute('data-post')) location.href = '/detail.html?id=' + el.getAttribute('data-post');
+  });
+
+  $('btnRedeem').onclick = async () => {
+    const ok = await A.confirm('兑换餐券', '将扣除 2 积分，生成一张 8 位核销码的食堂餐券。', '兑换');
+    if (!ok) return;
+    const r = await A.api('reward', { method: 'POST', body: { action: 'redeem' } });
+    if (!r.ok) return A.toast(r.errMsg || '兑换失败');
+    A.toast('兑换成功：' + r.coupon.code);
+    load();
+  };
+
+  $('btnRepair').onclick = async () => {
+    const dry = await A.api('claim', { method: 'POST', body: { action: 'repair', dryRun: true } });
+    if (!dry.ok) return A.toast(dry.errMsg || '自检失败');
+    if (!dry.willCredit) return A.toast('没有发现漏发的积分');
+    const ok = await A.confirm('发现可补发的积分', '检测到 ' + dry.willCredit + ' 笔应加未加的积分，是否补发？', '补发');
+    if (!ok) return;
+    const r = await A.api('claim', { method: 'POST', body: { action: 'repair' } });
+    if (!r.ok) return A.toast(r.errMsg || '补发失败');
+    A.toast('已补发 ' + r.willCredit + ' 积分');
+    load();
+  };
+
+  $('btnGrant').onclick = async () => {
+    const r = await A.api('reward', { method: 'POST', body: { action: 'grant', points: 1 } });
+    if (!r.ok) return A.toast(r.errMsg || '操作失败');
+    A.toast('已 +1 积分（演示用）');
+    load();
+  };
+
+  $('btnDedupe').onclick = async () => {
+    const r = await A.api('demo/dedupe', { method: 'POST', body: { dryRun: true } });
+    if (!r.ok) return A.toast(r.errMsg || '检查失败');
+    if (!r.removable) return A.toast('没有重复帖子（共 ' + r.total + ' 条）');
+    const ok = await A.confirm('发现重复帖子', '共 ' + r.removable + ' 条重复（同类型 + 同描述 + 同一分钟），是否删除多余副本？', '删除');
+    if (!ok) return;
+    const d = await A.api('demo/dedupe', { method: 'POST', body: { dryRun: false } });
+    A.toast(d.ok ? '已删除 ' + d.removable + ' 条重复帖子' : d.errMsg || '删除失败');
+    load();
+  };
+
+  $('btnReseed').onclick = async () => {
+    const ok = await A.confirm('重置演示数据？', '会删除所有演示帖子、消息和申请，然后重新导入 20 条，你自己发的帖子不受影响。', '重置');
+    if (!ok) return;
+    const r = await A.api('seed', { method: 'POST', body: { force: true } });
+    if (!r.ok) return A.toast(r.errMsg || '重置失败');
+    A.toast(r.msg || '已重置');
+    load();
+  };
+
+  load();
+  A.refreshUnread();
+})();
+</script>
+</body>
+</html>

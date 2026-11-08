@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
+<title>消息 · 校园失物招领</title>
+<link rel="stylesheet" href="/assets/app.css" />
+</head>
+<body>
+<header class="nav">
+  <h1>消息中心</h1>
+  <button class="btn btn-sm" id="btnReadAll" style="background:rgba(255,255,255,.18);color:#fff">全部已读</button>
+</header>
+
+<main class="wrap">
+  <div id="tip" class="muted" style="margin:0 4px 12px;display:none"></div>
+  <div id="list"></div>
+  <div id="empty" class="empty" style="display:none">
+    <div class="big" id="emptyIco"></div>
+    <div>还没有消息</div>
+    <div class="muted" style="margin-top:8px">发布帖子后，一旦有匹配或认领申请，会第一时间出现在这里</div>
+  </div>
+</main>
+
+<script src="/assets/app.js"></script>
+<script>
+(function () {
+  const A = window.APP;
+  A.mountTab('message');
+  document.getElementById('emptyIco').innerHTML = A.ICO.mail;
+  const $ = (id) => document.getElementById(id);
+
+  function item(m) {
+    const scoreHtml = m.score ? '<span class="s">' + m.score + ' 分</span>' : '';
+    return (
+      '<div class="msg-item ' + (m.read ? '' : 'unread') + '" data-post="' + (m.postId || '') + '">' +
+      scoreHtml +
+      '<div class="t">' + (m.read ? '' : '<span class="dot-red"></span>') + A.esc(m.title || '通知') + '</div>' +
+      '<div class="c">' + A.esc(m.content || '') + '</div>' +
+      (m.reasons && m.reasons.length
+        ? '<div class="reasons" style="margin-top:8px">' + m.reasons.map((x) => '<span class="reason">' + A.esc(x) + '</span>').join('') + '</div>'
+        : '') +
+      '<div class="time">' + A.ago(m.createTime) + '</div>' +
+      '</div>'
+    );
+  }
+
+  async function load() {
+    const r = await A.api('messages');
+    if (!r.ok) {
+      $('list').innerHTML = '<div class="empty">' + A.esc(r.errMsg || '加载失败') + '</div>';
+      return;
+    }
+    $('list').innerHTML = r.list.map(item).join('');
+    $('empty').style.display = r.list.length ? 'none' : 'block';
+    if (!r.list.length) $('list').innerHTML = '';
+    const tip = $('tip');
+    if (r.unread) {
+      tip.style.display = 'block';
+      tip.innerHTML = '有 <b style="color:#f5483b">' + r.unread + '</b> 条未读，点开一条即视为已读；也可以点右上角「全部已读」';
+    } else {
+      tip.style.display = 'none';
+    }
+    A.refreshUnread();
+  }
+
+  $('btnReadAll').onclick = async () => {
+    const r = await A.api('messages', { method: 'POST', body: { action: 'readAll' } });
+    if (!r.ok) return A.toast(r.errMsg || '操作失败');
+    A.toast('已全部标记为已读');
+    load();
+  };
+
+  $('list').addEventListener('click', async (e) => {
+    const el = e.target.closest('[data-post]');
+    if (!el) return;
+    const postId = el.getAttribute('data-post');
+    if (!postId) return;
+    location.href = '/detail.html?id=' + encodeURIComponent(postId);
+  });
+
+  load();
+})();
+</script>
+</body>
+</html>

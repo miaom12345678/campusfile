@@ -1,0 +1,352 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
+<title>发布 · 校园失物招领</title>
+<link rel="stylesheet" href="/assets/app.css" />
+</head>
+<body>
+<header class="nav">
+  <h1>发布信息</h1>
+  <span class="nav-sub">发布后自动匹配</span>
+</header>
+
+<main class="wrap" id="root">
+  <div id="result"></div>
+
+  <div class="card">
+    <div class="seg" id="typeSeg">
+      <button data-type="lost" class="on">我丢了东西</button>
+      <button data-type="found">我捡到东西</button>
+    </div>
+    <div class="muted" id="typeHint" style="margin-top:8px">发布失物信息，等待捡到的人来匹配</div>
+  </div>
+
+  <div class="card">
+    <div class="field">
+      <label>物品类别 <span style="color:#e4574c">*</span></label>
+      <div class="chips" id="catChips"></div>
+    </div>
+
+    <div class="field">
+      <label>颜色 <span class="muted">（选填，不确定就选第一项）</span></label>
+      <div class="chips" id="colorChips"></div>
+    </div>
+
+    <div class="field" style="margin-bottom:0">
+      <label>品牌 / 型号 <span class="muted">（选填）</span></label>
+      <input id="brand" type="text" placeholder="如 iPhone、膳魔师、AirPods" maxlength="30" />
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="field">
+      <label>地点 <span style="color:#e4574c">*</span> <span class="muted">最多 3 个</span></label>
+      <div class="chips" id="campusChips" style="margin-bottom:10px"></div>
+      <div id="buildingArea"></div>
+      <div class="hint">已选：<span id="pickedLoc">还没选</span></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="field">
+      <label>时间 <span style="color:#e4574c">*</span></label>
+      <div class="seg" id="timeSeg" style="margin-bottom:10px">
+        <button data-mode="day" class="on">具体某一天</button>
+        <button data-mode="range">一个时间段</button>
+        <button data-mode="unknown">记不清了</button>
+      </div>
+      <div id="timeArea" class="row">
+        <input id="t1" type="date" />
+      </div>
+      <div class="hint" id="timeHint">捡到时间与丢失时间越接近，匹配度越高</div>
+    </div>
+
+    <div class="field" style="margin-bottom:0">
+      <label>物品细节 <span style="color:#e4574c">*</span></label>
+      <textarea id="desc" maxlength="300" placeholder="写清能证明物品归属的细节，例如：黑色卡套、背面贴了柯基贴纸、学号 2023 开头…（至少 5 个字）"></textarea>
+      <div class="hint"><span id="descCount">0</span>/300 · 描述越具体，越容易被匹配到</div>
+    </div>
+
+    <div class="field" id="idField" style="display:none;margin-bottom:0">
+      <label>证件号码 <span class="muted">（选填，仅用于后台比对）</span></label>
+      <input id="idNumber" type="text" placeholder="完整号码只有服务器知道，页面只显示后四位" maxlength="30" />
+      <div class="hint">填了可以大幅提高证件类物品的匹配准确率，隐私不会被公开</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-title">联系方式</div>
+    <div class="muted" style="margin-bottom:10px">默认隐藏，只有双方确认认领后才会互相可见</div>
+    <div class="field">
+      <label>微信号</label>
+      <input id="wechat" type="text" placeholder="选填，与手机至少填一个" maxlength="40" />
+    </div>
+    <div class="field" style="margin-bottom:0">
+      <label>手机号</label>
+      <input id="phone" type="tel" placeholder="选填，与微信至少填一个" maxlength="20" />
+    </div>
+  </div>
+
+  <button class="btn btn-primary btn-block" id="submit" style="margin:6px 0 20px">发布并自动匹配</button>
+</main>
+
+<script src="/assets/app.js"></script>
+<script>
+(function () {
+  const A = window.APP;
+  A.mountTab('publish');
+
+  const S = {
+    type: 'lost',
+    category: '',
+    color: '',
+    locations: [],
+    timeMode: 'day',
+    campusIndex: 0,
+    cfg: null
+  };
+
+  const $ = (id) => document.getElementById(id);
+  const catChips = $('catChips');
+  const colorChips = $('colorChips');
+  const campusChips = $('campusChips');
+  const buildingArea = $('buildingArea');
+  const pickedLoc = $('pickedLoc');
+
+  function todayStr() {
+    const d = new Date();
+    return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+  }
+
+  function renderCats() {
+    catChips.innerHTML = S.cfg.categories
+      .map((c) => '<button class="chip ' + (c === S.category ? 'on' : '') + '" data-cat="' + A.esc(c) + '">' + A.esc(c) + '</button>')
+      .join('');
+    $('idField').style.display = S.cfg.idCategories.indexOf(S.category) >= 0 ? 'block' : 'none';
+  }
+
+  function renderColors() {
+    colorChips.innerHTML = S.cfg.colors
+      .map((c) => '<button class="chip ' + (c === S.color ? 'on' : '') + '" data-color="' + A.esc(c) + '">' + A.esc(c) + '</button>')
+      .join('');
+  }
+
+  function renderCampuses() {
+    campusChips.innerHTML = S.cfg.campuses
+      .map(
+        (c, i) =>
+          '<button class="chip ' + (i === S.campusIndex ? 'on' : '') + '" data-campus="' + i + '">' + A.esc(c.name) + '</button>'
+      )
+      .join('');
+    renderBuildings();
+  }
+
+  function renderBuildings() {
+    const campus = S.cfg.campuses[S.campusIndex];
+    if (!campus) return;
+    buildingArea.innerHTML = campus.groups
+      .map(
+        (g) =>
+          '<div style="margin-bottom:10px"><div class="muted" style="margin:4px 0 7px">' + A.esc(g.label) + '</div>' +
+          '<div class="chips">' +
+          g.buildings
+            .map((b) => {
+              const on = S.locations.some((x) => x.campus === campus.name && x.building === b);
+              const full = S.locations.length >= S.cfg.maxLocation && !on;
+              return (
+                '<button class="chip ' + (on ? 'on' : '') + (full ? ' disabled' : '') + '" data-building="' + A.esc(b) + '">' +
+                A.esc(b) + '</button>'
+              );
+            })
+            .join('') +
+          '</div></div>'
+      )
+      .join('');
+  }
+
+  function renderPicked() {
+    if (!S.locations.length) {
+      pickedLoc.textContent = '还没选';
+      return;
+    }
+    pickedLoc.innerHTML = S.locations
+      .map(
+        (l, i) =>
+          '<span class="tag tag-blue" style="margin-right:6px">' + A.esc(l.building || l.campus) +
+          ' <a href="javascript:;" data-rm="' + i + '" style="color:#d34">×</a></span>'
+      )
+      .join('');
+  }
+
+  function renderTime() {
+    const area = $('timeArea');
+    if (S.timeMode === 'unknown') {
+      area.innerHTML = '<div class="lock-box" style="flex:1">不填时间，匹配时时间维度不计分也不会扣分</div>';
+      $('timeHint').textContent = '选「记不清」不会影响你收到匹配，只是时间分拿不到';
+    } else if (S.timeMode === 'range') {
+      area.innerHTML = '<input id="t1" type="date" style="flex:1"><span class="muted">至</span><input id="t2" type="date" style="flex:1">';
+      $('t1').value = todayStr();
+      $('t2').value = todayStr();
+      $('timeHint').textContent = '给一个大致范围，捡到时间落在范围内即视为完全吻合';
+    } else {
+      area.innerHTML = '<input id="t1" type="date" style="flex:1">';
+      $('t1').value = todayStr();
+      $('timeHint').textContent = '捡到时间与丢失时间越接近，匹配度越高';
+    }
+  }
+
+  /* ---------- 事件 ---------- */
+  $('typeSeg').addEventListener('click', (e) => {
+    const b = e.target.closest('button[data-type]');
+    if (!b) return;
+    S.type = b.getAttribute('data-type');
+    $('typeSeg').querySelectorAll('button').forEach((x) => x.classList.remove('on'));
+    b.classList.add('on');
+    $('typeHint').textContent =
+      S.type === 'lost' ? '发布失物信息，等待捡到的人来匹配' : '发布招领信息，等待失主来匹配（归还成功 +1 积分）';
+  });
+
+  catChips.addEventListener('click', (e) => {
+    const b = e.target.closest('[data-cat]');
+    if (!b) return;
+    S.category = b.getAttribute('data-cat');
+    renderCats();
+  });
+
+  colorChips.addEventListener('click', (e) => {
+    const b = e.target.closest('[data-color]');
+    if (!b) return;
+    const c = b.getAttribute('data-color');
+    S.color = S.color === c ? '' : c;
+    renderColors();
+  });
+
+  campusChips.addEventListener('click', (e) => {
+    const b = e.target.closest('[data-campus]');
+    if (!b) return;
+    S.campusIndex = Number(b.getAttribute('data-campus'));
+    renderCampuses();
+  });
+
+  buildingArea.addEventListener('click', (e) => {
+    const b = e.target.closest('[data-building]');
+    if (!b) return;
+    const campus = S.cfg.campuses[S.campusIndex];
+    const building = b.getAttribute('data-building');
+    const idx = S.locations.findIndex((x) => x.campus === campus.name && x.building === building);
+    if (idx >= 0) S.locations.splice(idx, 1);
+    else if (S.locations.length < S.cfg.maxLocation) S.locations.push({ campus: campus.name, building });
+    else return A.toast('最多选 ' + S.cfg.maxLocation + ' 个地点');
+    renderBuildings();
+    renderPicked();
+  });
+
+  pickedLoc.addEventListener('click', (e) => {
+    const a = e.target.closest('[data-rm]');
+    if (!a) return;
+    S.locations.splice(Number(a.getAttribute('data-rm')), 1);
+    renderBuildings();
+    renderPicked();
+  });
+
+  $('timeSeg').addEventListener('click', (e) => {
+    const b = e.target.closest('button[data-mode]');
+    if (!b) return;
+    S.timeMode = b.getAttribute('data-mode');
+    $('timeSeg').querySelectorAll('button').forEach((x) => x.classList.remove('on'));
+    b.classList.add('on');
+    renderTime();
+  });
+
+  $('desc').addEventListener('input', (e) => {
+    $('descCount').textContent = e.target.value.length;
+  });
+
+  /* ---------- 提交 ---------- */
+  $('submit').addEventListener('click', async () => {
+    if (!S.category) return A.toast('请选择物品类别');
+    if (!S.locations.length) return A.toast('请至少选择一个地点');
+    const desc = $('desc').value.trim();
+    if (desc.length < 5) return A.toast('请把物品特征写清楚一些（至少 5 个字）');
+
+    const payload = {
+      type: S.type,
+      category: S.category,
+      color: S.color,
+      brand: $('brand').value.trim(),
+      locations: S.locations,
+      timeMode: S.timeMode,
+      description: desc,
+      contact: { wechat: $('wechat').value.trim(), phone: $('phone').value.trim() },
+      idNumber: $('idNumber').value.trim()
+    };
+
+    if (S.timeMode !== 'unknown') {
+      const t1 = $('t1').value;
+      if (!t1) return A.toast('请选择日期，或选择「记不清了」');
+      payload.eventTime = new Date(t1 + 'T09:00:00').getTime();
+      if (S.timeMode === 'range') {
+        const t2 = $('t2').value;
+        if (!t2) return A.toast('请选择时间段的结束日期');
+        payload.eventTimeEnd = new Date(t2 + 'T18:00:00').getTime();
+      }
+    }
+    if (!payload.contact.wechat && !payload.contact.phone) return A.toast('请至少留一种联系方式');
+
+    const btn = $('submit');
+    btn.disabled = true;
+    btn.textContent = '正在匹配…';
+    const r = await A.api('publish', { method: 'POST', body: payload });
+    btn.disabled = false;
+    btn.textContent = '发布并自动匹配';
+    if (!r.ok) return A.toast(r.errMsg || '发布失败');
+
+    const top = r.topMatches || [];
+    const box = $('result');
+    box.innerHTML =
+      '<div class="card" style="border:1px solid #bfe7d1;background:#f7fdfa">' +
+      '<div class="card-title" style="color:#17744a">✅ 发布成功，已自动匹配</div>' +
+      '<div class="muted" style="margin-bottom:10px">与 ' + (r.matchCount || 0) + ' 条反向帖子命中（≥' + r.threshold + ' 分），其中高度匹配 ' + (r.highCount || 0) + ' 条</div>' +
+      (top.length
+        ? top
+            .map(
+              (m) =>
+                '<div class="claim-item" style="cursor:pointer" data-go="' + m.postId + '">' +
+                '<div class="row-between"><b>' + A.esc(m.summary.category) + '</b><span class="score ' + A.levelClass(m.score) + '" style="position:static">' + m.score + ' 分 · ' + A.esc(m.levelText) + '</span></div>' +
+                '<div class="muted" style="margin-top:4px">' + A.esc(m.summary.description) + '</div>' +
+                '<div class="reasons">' + (m.reasons || []).map((x) => '<span class="reason">' + A.esc(x) + '</span>').join('') + '</div>' +
+                '</div>'
+            )
+            .join('')
+        : '<div class="lock-box">暂时没有匹配到反向帖子。别急，只要有人发布与你相反的帖子，系统会立刻提醒你，不用反复搜索。</div>') +
+      '<div class="btn-row" style="margin-top:12px">' +
+      '<a class="btn btn-ghost" href="/index.html">回到广场</a>' +
+      '<a class="btn btn-primary" href="/detail.html?id=' + r.postId + '">查看我发布的</a>' +
+      '</div></div>';
+    box.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    A.refreshUnread();
+  });
+
+  document.addEventListener('click', (e) => {
+    const a = e.target.closest('[data-go]');
+    if (a) location.href = '/detail.html?id=' + a.getAttribute('data-go');
+  });
+
+  /* ---------- 初始化 ---------- */
+  A.api('config').then((cfg) => {
+    if (!cfg.ok) return A.toast('加载配置失败');
+    S.cfg = cfg;
+    S.color = '';
+    renderCats();
+    renderColors();
+    renderCampuses();
+    renderPicked();
+    renderTime();
+    A.storageWarn(document.getElementById('root'), cfg.storage);
+  });
+})();
+</script>
+</body>
+</html>
